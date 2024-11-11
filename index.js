@@ -1,9 +1,11 @@
 const express = require('express');
 const app = express();
+
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const port = process.env.PORT || 5000;
 //middleware
 app.use(cors());
@@ -22,13 +24,16 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     const userCollection = client.db('coffeeWithYouDB').collection('users');
     const menuCollection = client.db('coffeeWithYouDB').collection('menu');
     const reviewsCollection = client
       .db('coffeeWithYouDB')
       .collection('reviews');
     const cartCollection = client.db('coffeeWithYouDB').collection('carts');
+    const paymentCollection = client
+      .db('coffeeWithYouDB')
+      .collection('payment');
 
     //jwt related api
     app.post('/jwt', async (req, res) => {
@@ -193,7 +198,35 @@ async function run() {
       res.send(result);
     });
 
-    await client.db('admin').command({ ping: 1 });
+    //payment with stripe
+    app.post('/create-payment-intent', async (req, res) => {
+      const { price } = req.body;
+      const amount = parseInt(price * 100);
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: 'usd',
+        payment_method_types: ['card'],
+      });
+      res.send({
+        clientSecret: paymentIntent.client_secret,
+      });
+    });
+    //payment related api
+    app.post('/payments', async (req, res) => {
+      const payment = req.body;
+      const paymentResult = await paymentCollection.insertOne(payment);
+      //carefuly delete each id
+      const query = {
+        _id: {
+          $in: payment.cartIds.map((id) => new ObjectId(id)),
+        },
+      };
+      const deleteResult = await cartCollection.deleteMany(query);
+      console.log('payment info', payment);
+      res.send(paymentResult, deleteResult);
+    });
+
+    // await client.db('admin').command({ ping: 1 });
   } finally {
   }
 }
